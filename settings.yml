@@ -1,0 +1,28 @@
+---
+start_date: '@2015-01-01'
+end_date: last_close
+columns:
+  - id: ticker
+    title: Symbol
+    format: '%s'
+    justify: left
+  - id: name
+    title: Name
+    format: '%s'
+    justify: left
+  - id: price
+    title: Price
+    format: '%.2f'
+    justify: right
+  - id: shares
+    title: Shares
+    format: '%i'
+    justify: right
+  - id: market_value
+    title: Market Value
+    format: '%.2f'
+    justify: right
+  - id: weight
+    title: Weight %
+    format: '%.2f'
+    justify: right

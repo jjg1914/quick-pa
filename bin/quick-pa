@@ -1,0 +1,163 @@
+#!/usr/bin/env ruby
+
+require "yahoo-finance"
+require "yaml"
+require "ostruct"
+
+def read_date(date)
+  date = date.to_s.strip
+  if date[0] == "@"
+    Date.parse date.slice(1..-1)
+  else
+    case date
+    when "last_close"
+      if Date.today.monday?
+        Date.today - 3
+      elsif Date.today.sunday?
+        Date.today - 2
+      else
+        Date.today - 1
+      end
+    else
+      Date.today
+    end
+  end
+end
+
+def market_value(symbol, data, portfolio)
+  data[symbol].close.to_f * portfolio[symbol].to_f
+end
+
+def total_market_value(data, portfolio)
+  portfolio.keys.reject do|e|
+    data[e].nil?
+  end.map do |e|
+    market_value(e, data, portfolio)
+  end.reduce do |m,v|
+    m + v
+  end
+end
+
+def weight(symbol, data, portfolio)
+  100 * ( market_value(symbol, data, portfolio) / total_market_value(data, portfolio))
+end
+
+def fetch(portfolio, settings)
+  latest = YahooFinance.quotes(portfolio.keys, [ :symbol, :name ]).map { |e| [ e.symbol, e ] }.to_h
+
+  portfolio.keys.map do |e|
+    data = YahooFinance.historical_quotes(e, :start_date => settings[:start_date], :end_date => settings[:end_date]).sort_by do |f|
+      f.trade_date
+    end
+    
+    value = OpenStruct.new
+    value.symbol = e
+    value.name = latest[e].name
+    value.close = data.last.close.to_f
+    value.open = data.first.close.to_f
+    next value
+  end.map { |e| [ e.symbol, e ] }.to_h
+end
+
+def report(data, portfolio)
+  total = {
+    :ticker => { :data => '' },
+    :name => { :data => 'Total' },
+    :price => { :data => '' },
+    :shares => { :data => portfolio.values.reduce { |m,v| m + v } },
+    :market_value => { :data => total_market_value(data, portfolio) },
+    :weight => { :data => 100 }
+  }
+
+  [ total ] + data.keys.map do |e|
+    {
+      :ticker => { :data => e },
+      :name => { :data => data[e].name },
+      :price => { :data => data[e].close.to_f, :change => data[e].close.to_f - data[e].open.to_f },
+      :shares => { :data => portfolio[e] },
+      :market_value => { :data => market_value(e, data, portfolio) },
+      :weight => { :data => weight(e, data, portfolio ) }
+    }
+  end
+end
+
+def format(report, columns)
+  titles = columns.map do |e|
+    e["title"]
+  end
+
+  formatted = report.map do |e|
+    columns.map do |f|
+      begin
+        format_string = f["format"] % e[f["id"].to_sym][:data]
+=begin
+        unless e[f["id"].to_sym][:change].nil?
+          if e[f["id"].to_sym][:change] > 0
+            "\e[32m" + format_string + "\e[0m"
+          elsif e[f["id"].to_sym][:change] < 0
+            "\e[31m" + format_string + "\e[0m"
+          else
+            format_string
+          end
+        else
+          format_string
+        end
+=end
+      rescue
+        '--'
+      end
+    end
+  end
+
+  widths = ([ titles ] + formatted).reduce(Array.new(columns.size, 0)) do |m,v|
+    m.zip(v).map do |curr,new|
+      [ curr, new.size ].max
+    end
+  end
+
+  titles_formatted = titles.zip(widths).map do |title, width|
+    "\e[1m" + title.ljust(width) + "\e[0m"
+  end
+
+  [ titles_formatted ] + formatted.map do |e|
+    e.zip(columns, widths).map do |value, column, width|
+      case column['justify']
+      when 'right'
+        value.rjust width
+      when 'left'
+        value.ljust width
+      when 'center'
+        value.center width
+      end
+    end
+  end
+end
+
+def display(report)
+  report.map do |row|
+    row.join("  ")
+  end.join("\n")
+end
+
+def read_settings(filename)
+  settings_file = YAML.load(File.read filename)
+
+  {
+    :start_date => read_date(settings_file["start_date"]),
+    :end_date => read_date(settings_file["end_date"]),
+    :columns => settings_file["columns"]
+  }
+end
+
+def read_portfolio(filename)
+  portfolio_file = YAML.load(File.read filename)
+
+  portfolio_file.map do |e|
+    [ e["symbol"], e["shares" ] ]
+  end.to_h
+end
+
+settings = read_settings "settings.yml"
+portfolio = read_portfolio "portfolio.yml"
+
+puts display(format(report(fetch(portfolio, settings), portfolio), settings[:columns]))
